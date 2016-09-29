@@ -1402,6 +1402,89 @@ ifeq ($(BOARD_USES_LIBC_WRAPPER),true)
     LOCAL_CPPFLAGS += -DUSE_WRAPPER
 endif
 
+ifeq ($(BOARD_HAS_OLD_x86_BLOBS),true)
+LOCAL_MODULE := libc
+LOCAL_CLANG := $(use_clang)
+LOCAL_REQUIRED_MODULES := tzdata
+LOCAL_ADDITIONAL_DEPENDENCIES := \
+    $(libc_common_additional_dependencies) \
+    $(LOCAL_PATH)/old_maps/libc.arm.map \
+    $(LOCAL_PATH)/old_maps/libc.arm64.map \
+    $(LOCAL_PATH)/old_maps/libc.mips.map \
+    $(LOCAL_PATH)/old_maps/libc.mips64.map \
+    $(LOCAL_PATH)/old_maps/libc.x86.map \
+    $(LOCAL_PATH)/old_maps/libc.x86_64.map \
+    $(LOCAL_PATH)/old_maps/libc.arm.brillo.map \
+    $(LOCAL_PATH)/old_maps/libc.mips.brillo.map \
+    $(LOCAL_PATH)/old_maps/libc.x86.brillo.map \
+
+# Leave the symbols in the shared library so that stack unwinders can produce
+# meaningful name resolution.
+LOCAL_STRIP_MODULE := keep_symbols
+
+# Do not pack libc.so relocations; see http://b/20645321 for details.
+LOCAL_PACK_MODULE_RELOCATIONS := false
+
+# WARNING: The only library libc.so should depend on is libdl.so!  If you add other libraries,
+# make sure to add -Wl,--exclude-libs=libgcc.a to the LOCAL_LDFLAGS for those libraries.  This
+# ensures that symbols that are pulled into those new libraries from libgcc.a are not declared
+# external; if that were the case, then libc would not pull those symbols from libgcc.a as it
+# should, instead relying on the external symbols from the dependent libraries.  That would
+# create a "cloaked" dependency on libgcc.a in libc though the libraries, which is not what
+# you wanted!
+
+LOCAL_SHARED_LIBRARIES := libdl
+LOCAL_WHOLE_STATIC_LIBRARIES := libc_common libjemalloc
+
+LOCAL_CXX_STL := none
+LOCAL_SYSTEM_SHARED_LIBRARIES :=
+
+# TODO: This is to work around b/24465209. Remove after root cause is fixed
+LOCAL_LDFLAGS_arm := -Wl,--hash-style=both
+LOCAL_LDFLAGS_x86 := -Wl,--hash-style=both
+
+# Don't re-export new/delete and friends, even if the compiler really wants to.
+ifdef BRILLO
+LOCAL_LDFLAGS_arm    += -Wl,--version-script,$(LOCAL_PATH)/old_maps/libc.arm.brillo.map
+LOCAL_LDFLAGS_mips   += -Wl,--version-script,$(LOCAL_PATH)/old_maps/libc.mips.brillo.map
+LOCAL_LDFLAGS_x86    += -Wl,--version-script,$(LOCAL_PATH)/old_maps/libc.x86.brillo.map
+else
+LOCAL_LDFLAGS_arm    += -Wl,--version-script,$(LOCAL_PATH)/old_maps/libc.arm.map
+LOCAL_LDFLAGS_mips   += -Wl,--version-script,$(LOCAL_PATH)/old_maps/libc.mips.map
+LOCAL_LDFLAGS_x86    += -Wl,--version-script,$(LOCAL_PATH)/old_maps/libc.x86.map
+endif
+
+LOCAL_LDFLAGS_arm64  += -Wl,--version-script,$(LOCAL_PATH)/old_maps/libc.arm64.map
+LOCAL_LDFLAGS_mips64 += -Wl,--version-script,$(LOCAL_PATH)/old_maps/libc.mips64.map
+LOCAL_LDFLAGS_x86_64 += -Wl,--version-script,$(LOCAL_PATH)/old_maps/libc.x86_64.map
+
+# We'd really like to do this for all architectures, but since this wasn't done
+# before, these symbols must continue to be exported on LP32 for binary
+# compatibility.
+LOCAL_LDFLAGS_64 := -Wl,--exclude-libs,libgcc.a
+
+# Unfortunately --exclude-libs clobbers our version script, so we have to
+# prevent the build system from using this flag.
+LOCAL_NO_EXCLUDE_LIBS := true
+
+$(eval $(call patch-up-arch-specific-flags,LOCAL_CFLAGS,libc_common_cflags))
+$(eval $(call patch-up-arch-specific-flags,LOCAL_SRC_FILES,libc_arch_dynamic_src_files))
+
+LOCAL_NO_CRT := true
+LOCAL_ASFLAGS += $(libc_crt_target_cflags)
+
+# special for arm
+LOCAL_CFLAGS_arm += -DCRT_LEGACY_WORKAROUND
+LOCAL_SRC_FILES_arm += \
+    arch-arm/bionic/atexit_legacy.c
+
+LOCAL_SANITIZE := never
+LOCAL_NATIVE_COVERAGE := $(bionic_coverage)
+
+# Allow devices to provide additional symbols
+LOCAL_WHOLE_STATIC_LIBRARIES += $(BOARD_PROVIDES_ADDITIONAL_BIONIC_STATIC_LIBS)
+
+else
 LOCAL_MODULE := libc
 LOCAL_CLANG := $(use_clang)
 LOCAL_REQUIRED_MODULES := tzdata
@@ -1482,6 +1565,7 @@ LOCAL_NATIVE_COVERAGE := $(bionic_coverage)
 
 # Allow devices to provide additional symbols
 LOCAL_WHOLE_STATIC_LIBRARIES += $(BOARD_PROVIDES_ADDITIONAL_BIONIC_STATIC_LIBS)
+endif
 
 include $(BUILD_SHARED_LIBRARY)
 
